@@ -63,10 +63,23 @@ print_message() {
 #######################################
 resolve_repo_url() {
     local repo="$1"
-    if [[ "$repo" =~ ^(https://|http://|git://|git@|ssh://git@) ]]; then
-        printf '%s\n' "$repo"
+    local cleaned_repo
+
+    # Remove query parameters and fragments
+    cleaned_repo="${repo%%\?*}"
+    cleaned_repo="${cleaned_repo%%#*}"
+
+    # Check if it's already a full URL
+    if [[ "$cleaned_repo" =~ ^(https://|http://|git://|git@|ssh://git@) ]]; then
+        # If it's a GitHub URL, ensure it ends with .git
+        if [[ "$cleaned_repo" =~ ^https?://github.com/ && ! "$cleaned_repo" =~ \.git$ ]]; then
+            printf '%s.git\n' "$cleaned_repo"
+        else
+            printf '%s\n' "$cleaned_repo"
+        fi
     else
-        printf 'https://github.com/%s.git\n' "$repo"
+        # If it's not a full URL, assume it's a GitHub repository
+        printf 'https://github.com/%s.git\n' "$cleaned_repo"
     fi
 }
 
