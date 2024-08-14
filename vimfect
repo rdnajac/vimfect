@@ -1,79 +1,170 @@
-#!/bin/bash
+#!/usr/bin/env zsh
+
 #######################################
 ## Vim plugin management using Git submodules
-## Author:  Ryan D. Najac
+## Author:  Ryan D. Najac (Original), AI Assistant (Zsh adaptation)
 ## License: GNU General Public License v3.0
-## Usage: vimfect <repository-url> [repository-url...]
+## Usage: ./vimfect.zsh {update|list|add <repository-url> [repository-url...]}
 ## Description: This script manages Vim plugins using Git submodules.
-##              It adds the specified repositories as submodules in the
-##              same directory as the script. The script then commits the
-##              changes to the repository. The script also syncs and
-##              updates the submodules.
+##              It can add specified repositories as submodules,
+##              update existing submodules, and list current submodules.
+##              The script operates in the Vim pack directory.
 #######################################
 
 # Enforce strict error checking
-set -euo pipefail
+setopt ERR_EXIT PIPE_FAIL WARN_CREATE_GLOBAL
+
+# Enable extended globbing
+setopt EXTENDED_GLOB
 
 # Uncomment to enable debugging
-# set -x
+# setopt XTRACE VERBOSE
 
-# Usage message
-USAGE="Usage: ${0} <repository-url> [repository-url...]"
+# Load color support
+autoload -Uz colors && colors
+
+# Load and enable version control information
+autoload -Uz vcs_info
+precmd_vcs_info() { vcs_info }
+precmd_functions+=( precmd_vcs_info )
+zstyle ':vcs_info:git:*' formats '%F{yellow}(%b)%f '
+zstyle ':vcs_info:*' enable git
+
+# Define variables
+typeset -r VIM_DIR="${HOME}/.vim"
+typeset -r PACKDIR="${VIM_DIR}/pack/vimfect"
+typeset -r USAGE="Usage: ${0:t} {update|list|add <repository-url> [repository-url...]}"
+
+# Create necessary directories
+mkdir -p "$PACKDIR"
 
 #######################################
-# Resolve the full repository URL.
+# Print colorized output
 # Globals: None
-# Arguments: $1 - Repository name or URL
+# Arguments:
+#   $1 - Color name
+#   $2 - Message to print
+# Outputs: Writes colored message to stdout
+# Returns: None
+#######################################
+print_message() {
+    local color="$1"
+    local message="$2"
+    print -P "%F{$color}$message%f"
+}
+
+#######################################
+# Resolve the full repository URL
+# Globals: None
+# Arguments:
+#   $1 - Repository name or URL
 # Outputs: Writes full repository URL to stdout
 # Returns: 0 on success
 #######################################
 resolve_repo_url() {
-  local repo="$1"
-  if [[ "$repo" =~ ^(https://|http://|git://|git@|ssh://git@) ]]; then
-    printf '%s\n' "$repo"
-  else
-    printf 'https://github.com/%s.git\n' "$repo"
-  fi
+    local repo="$1"
+    if [[ "$repo" =~ ^(https://|http://|git://|git@|ssh://git@) ]]; then
+        printf '%s\n' "$repo"
+    else
+        printf 'https://github.com/%s.git\n' "$repo"
+    fi
 }
 
 #######################################
-# Manage Vim plugins using Git submodules.
-# Globals: SCRIPT_DIR
-# Arguments: $@ - Repository URLs
-# Outputs: stdout, stderr
+# Add a Git submodule
+# Globals: PACKDIR
+# Arguments:
+#   $1 - Repository URL
+# Outputs: Status messages to stdout
+# Returns: 0 on success, 1 on failure
+#######################################
+add_submodule() {
+    local url="$1"
+    local resolved_url=$(resolve_repo_url "$url")
+
+    print_message "blue" "Adding submodule: $resolved_url"
+
+    mkdir -vp "${PACKDIR}/start"
+    cd "${PACKDIR}/start" || { print_message "red" "Could not change to $PACKDIR"; return 1; }
+
+    if git submodule add --force --depth 1 --progress "$resolved_url"; then
+        print_message "green" "Successfully added submodule: $resolved_url"
+        git commit -m "vimfect: Add submodule $resolved_url"
+    else
+        print_message "red" "Failed to add submodule: $resolved_url"
+        return 1
+    fi
+}
+
+#######################################
+# Update all Git submodules
+# Globals: None
+# Arguments: None
+# Outputs: Status messages to stdout
+# Returns: 0 on success, 1 on failure
+#######################################
+update_submodules() {
+    print_message "blue" "Updating submodules..."
+    if git submodule update --init --recursive; then
+        print_message "green" "Submodules updated successfully"
+    else
+        print_message "red" "Failed to update submodules"
+        return 1
+    fi
+}
+
+#######################################
+# List all Git submodules
+# Globals: None
+# Arguments: None
+# Outputs: List of submodules to stdout
 # Returns: 0 on success
 #######################################
-vimfect() {
-  for repo in "$@"; do
-    local resolved_repo
-    resolved_repo=$(resolve_repo_url "$repo")
-    local repo_name
-    repo_name=$(basename "$repo" .git)
-    git submodule add --force "$resolved_repo" "$repo_name"
-    git commit -m "vimfect: Add submodule $resolved_repo"
-  done
-  git submodule sync
-  git submodule update --init --recursive
+list_submodules() {
+    print_message "blue" "Listing submodules:"
+    git submodule status | while read -r line; do
+        local hash=$(echo $line | cut -d' ' -f1)
+        local name=$(echo $line | cut -d' ' -f2)
+        local branch=$(echo $line | cut -d' ' -f3)
+        print_message "yellow" "  $name ($branch) - $hash"
+    done
 }
 
 #######################################
 # Main function
 # Globals: None
-# Arguments: $@ - Repository URLs
-# Outputs: stdout, stderr
-# Returns: 0 on success
+# Arguments: Command-line arguments
+# Outputs: Various, depending on the operation
+# Returns: 0 on success, 1 on failure or invalid usage
 #######################################
 main() {
-  [[ $# -lt 1 ]] && { printf '%s\n' "$USAGE" >&2; exit 1; }
-
-  # Ensure the .gitmodules file exists and init if not
-  local DOTGITMODULES
-  DOTGITMODULES=$(git rev-parse --show-toplevel)/.gitmodules
-  [[ ! -f "$DOTGITMODULES" ]] && git submodule init
-
-  vimfect "$@"
+    case "$1" in
+        update)
+            update_submodules
+            ;;
+        list)
+            list_submodules
+            ;;
+        add)
+            shift
+            if [[ $# -eq 0 ]]; then
+                print_message "red" "Please provide at least one submodule URL to add"
+                print_message "cyan" "$USAGE"
+                return 1
+            fi
+            for url in "$@"; do
+                add_submodule "$url"
+            done
+            ;;
+        *)
+            print_message "cyan" "$USAGE"
+            print_message "cyan" "  update: Update all submodules"
+            print_message "cyan" "  list: List all submodules"
+            print_message "cyan" "  add: Add one or more submodules"
+            return 1
+            ;;
+    esac
 }
 
 # Call the main function with all the script arguments
 main "$@"
-

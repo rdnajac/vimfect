@@ -1,2 +1,3 @@
 # vimfect
-(Vim) Plugin management using Git submodules, written in Bash.
+
+(Vim) Plugin management using Git submodules, written in zsh.
